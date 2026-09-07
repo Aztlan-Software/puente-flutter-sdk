@@ -1292,7 +1292,20 @@ class MockTransport implements PuenteTransport {
         'kyc_status': kycStatus,
         'expires_at': session['expires_at'],
         'duplicate': duplicate,
-        if (clientToken != null) 'client_token': clientToken,
+        // The handoff fields travel together or not at all, mirroring
+        // `attach_handoff` in Puente (`kyc/mod.rs`): a plain duplicate carries
+        // exactly the eight keys above, so clients never see a null where they
+        // do not expect a key.
+        if (clientToken != null) ...<String, dynamic>{
+          'client_token': clientToken,
+          // The mock has a token but nothing to open with it — its lifecycle
+          // advances through POST /kyc/sessions/{id}/mock-events. The backend
+          // says `none` here for exactly this reason, and saying so beats
+          // omitting the key and having the client read `unknown`, which means
+          // "a surface this build predates" and would mask a real vendor change.
+          'verification_surface': 'none',
+          'provider_environment': 'mock',
+        },
       };
 
   PuenteResponse _createKycSession() {
