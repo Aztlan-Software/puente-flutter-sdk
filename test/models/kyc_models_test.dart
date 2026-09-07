@@ -330,5 +330,4 @@ void main() {
       expect(KycVerificationSurface.nativeSdk.launchable, isTrue);
     });
   });
-
 }
