@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.7.0 - 2026-09-06
+
+**Didit verification handoff.** `KycSession` can now tell a client how to
+launch verification, which it previously could not.
+
+- `KycSession.verificationUrl` — the hosted verification page, present on the
+  creation and resume responses only. Like `clientToken` it is excluded from
+  `toJson()` and masked in `toString()`: both are live capabilities over one
+  person's identity verification, and anyone holding the URL can submit their
+  own document and selfie into that session. Always check the host before
+  opening it.
+- `KycVerificationSurface` (`hosted_url` | `native_sdk` | `none` | `unknown`)
+  and `KycSession.verificationSurface`. Switch on this rather than on
+  `provider` or on whether a string looks like a URL — presentation and vendor
+  are different questions, one backend can serve both surfaces at once, and an
+  unrecognised surface reports `launchable == false` rather than being guessed
+  at.
+- `KycSession.providerEnvironment` (`live` | `sandbox` | `mock`). Worth
+  showing in the UI: for Didit the environment is a property of the API key's
+  application rather than of any URL, and the vendor's management API does not
+  report it, so a sandbox key in production is otherwise invisible.
+- `provider` may now be `didit`.
+
+All three fields are optional and tolerant of absence, so this build talks to
+an older backend unchanged.
+
 ## 0.6.0 — 2026-08-27
 
 **Full-audit hardening.** Security, correctness, and API-safety fixes from

@@ -270,4 +270,64 @@ void main() {
       expect(info.manualReviewPending, isTrue);
     });
   });
+  group('KycSession launch handoff', () {
+    Map<String, dynamic> creation() => <String, dynamic>{
+          'session_id': 'sess-1',
+          'provider': 'didit',
+          'provider_session_ref': 'didit-ref-1',
+          'status': 'session_created',
+          'kyc_status': 'in_progress',
+          'expires_at': '2026-09-13T00:00:00Z',
+          'duplicate': false,
+          'client_token': 'tok_abc123',
+          'verification_url': 'https://verify.didit.me/u/abc',
+          'verification_surface': 'hosted_url',
+          'provider_environment': 'sandbox',
+        };
+
+    test('parses the surface, url and environment', () {
+      final s = KycSession.fromJson(creation());
+      expect(s.provider, 'didit');
+      expect(s.verificationUrl, 'https://verify.didit.me/u/abc');
+      expect(s.verificationSurface, KycVerificationSurface.hostedUrl);
+      expect(s.verificationSurface.launchable, isTrue);
+      expect(s.providerEnvironment, 'sandbox');
+    });
+
+    test('never serializes either capability', () {
+      // Both grant the ability to complete someone else's verification, so
+      // neither may reach a JSON cache, a log, or a crash report.
+      final json = KycSession.fromJson(creation()).toJson();
+      expect(json.containsKey('client_token'), isFalse);
+      expect(json.containsKey('verification_url'), isFalse);
+      expect(json['verification_surface'], 'hosted_url');
+      expect(json['provider_environment'], 'sandbox');
+
+      final printed = KycSession.fromJson(creation()).toString();
+      expect(printed, isNot(contains('tok_abc123')));
+      expect(printed, isNot(contains('verify.didit.me')));
+      expect(printed, contains('****'));
+    });
+
+    test('an older backend that sends none of it still parses', () {
+      final legacy = creation()
+        ..remove('verification_url')
+        ..remove('verification_surface')
+        ..remove('provider_environment');
+      final s = KycSession.fromJson(legacy);
+      expect(s.verificationUrl, isNull);
+      expect(s.providerEnvironment, isNull);
+      expect(s.verificationSurface, KycVerificationSurface.unknown);
+      expect(s.verificationSurface.launchable, isFalse,
+          reason: 'an unknown surface must not be guessed at');
+    });
+
+    test('a surface this build does not know is not launchable', () {
+      final future = creation()..['verification_surface'] = 'holographic_kiosk';
+      expect(KycSession.fromJson(future).verificationSurface,
+          KycVerificationSurface.unknown);
+      expect(KycVerificationSurface.none.launchable, isFalse);
+      expect(KycVerificationSurface.nativeSdk.launchable, isTrue);
+    });
+  });
 }

@@ -317,10 +317,28 @@ void main() {
       expect(session.status, VerificationSessionStatus.sessionCreated);
       expect(session.clientToken, startsWith('mock_session_token_'));
       expect(session.duplicate, isFalse);
+      // The mock says `none`, not `unknown`. Both are unlaunchable, so the
+      // app behaves identically either way — but they mean different things,
+      // and only one of them is true here. `none` is "this provider has
+      // nothing to open, drive it with mock-events"; `unknown` is "a surface
+      // this build predates", which is how a real vendor adding a surface
+      // would show up. Emitting the key keeps that signal meaningful, and
+      // mirrors `attach_handoff` in Puente (`kyc/mod.rs`), which special-cases
+      // the mock to `none` for exactly this reason.
+      expect(session.verificationSurface, KycVerificationSurface.none);
+      expect(session.verificationSurface.launchable, isFalse);
+      expect(session.verificationUrl, isNull,
+          reason: 'the mock has no hosted page to hand out');
+      expect(session.providerEnvironment, 'mock');
 
       final dup = await client.kyc.createSession();
       expect(dup.duplicate, isTrue, reason: 'duplicate-session prevention');
       expect(dup.sessionId, session.sessionId);
+      // A plain duplicate carries no handoff at all — the backend asserts the
+      // response is exactly eight keys, so the surface must not appear here
+      // either, and absence is what makes it parse back as `unknown`.
+      expect(dup.clientToken, isNull);
+      expect(dup.verificationSurface, KycVerificationSurface.unknown);
 
       for (final scenario in [
         'document_captured',

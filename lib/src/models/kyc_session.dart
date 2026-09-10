@@ -5,14 +5,20 @@ import 'kyc_status.dart';
 /// A verification session (`POST /v1/kyc/sessions`,
 /// `GET /v1/kyc/sessions/current`).
 ///
-/// `clientToken` is present ONLY on the creation response (mirrors Incode's
-/// `/omni/start` handoff — the short-lived token the provider's mobile SDK
-/// initializes with). It is never persisted server-side and never returned
-/// again; treat it as ephemeral.
+/// [clientToken] and [verificationUrl] are present ONLY on the creation and
+/// resume responses. Neither is persisted server-side and neither is ever
+/// returned from `GET /v1/kyc/sessions/current`; treat both as ephemeral.
+///
+/// That is a security property, not an implementation detail: both are live
+/// capabilities over one person's identity verification. Anyone holding the
+/// URL can submit their own document and selfie into that session and be
+/// approved as that applicant, so neither value may be written to disk, put
+/// in a log, or round-tripped through a JSON cache. [toJson] omits both and
+/// [toString] masks them.
 class KycSession extends Equatable {
   final String sessionId;
 
-  /// `mock` | `incode`.
+  /// `mock` | `incode` | `didit`.
   final String provider;
 
   /// Opaque provider ref (Incode interviewId / mock ref).
@@ -25,7 +31,30 @@ class KycSession extends Equatable {
   /// True when an in-flight session already existed and was returned
   /// instead of creating a duplicate.
   final bool duplicate;
+
+  /// Creation/resume only. The token a provider's NATIVE SDK initializes with
+  /// (Incode's `/omni/start` JWT, Didit's 12-character `session_token`).
   final String? clientToken;
+
+  /// Creation/resume only. The hosted verification page to open in a browser.
+  ///
+  /// Always check the host before launching it — see
+  /// `KycLauncher.isTrustedVerificationUrl` in the app. A URL is a capability
+  /// here, and an unexpected origin must never be opened just because the
+  /// backend said so.
+  final String? verificationUrl;
+
+  /// Which of the two above the client should actually use. Switch on this
+  /// rather than on [provider] or on the shape of a string.
+  final KycVerificationSurface verificationSurface;
+
+  /// `live` | `sandbox` | `mock`, when the provider reports it.
+  ///
+  /// Worth surfacing in the UI. For Didit the environment is a property of
+  /// the API key's application rather than of any URL, and the vendor's
+  /// management API does not report it — so a sandbox key in production is
+  /// otherwise invisible until it starts approving everyone against mocks.
+  final String? providerEnvironment;
 
   const KycSession({
     required this.sessionId,
@@ -37,6 +66,9 @@ class KycSession extends Equatable {
     this.providerSessionRef,
     this.failureReason,
     this.clientToken,
+    this.verificationUrl,
+    this.verificationSurface = KycVerificationSurface.unknown,
+    this.providerEnvironment,
   });
 
   factory KycSession.fromJson(Map<String, dynamic> json) => KycSession(
@@ -51,10 +83,17 @@ class KycSession extends Equatable {
             : DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
         duplicate: json['duplicate'] as bool? ?? false,
         clientToken: json['client_token'] as String?,
+        verificationUrl: json['verification_url'] as String?,
+        verificationSurface: KycVerificationSurface.fromWire(
+            json['verification_surface'] as String?),
+        providerEnvironment: json['provider_environment'] as String?,
       );
 
-  /// Deliberately EXCLUDES `clientToken` — session tokens must not
-  /// round-trip through JSON caches or logs.
+  /// Deliberately EXCLUDES `clientToken` and `verificationUrl` — both are
+  /// live capabilities over this applicant's verification and must not
+  /// round-trip through JSON caches or logs. `verificationSurface` and
+  /// `providerEnvironment` are safe: they describe the session, they do not
+  /// grant access to it.
   Map<String, dynamic> toJson() => <String, dynamic>{
         'session_id': sessionId,
         'provider': provider,
@@ -65,11 +104,14 @@ class KycSession extends Equatable {
         'kyc_status': kycStatus.wire,
         'expires_at': expiresAt.toIso8601String(),
         'duplicate': duplicate,
+        'verification_surface': verificationSurface.wire,
+        if (providerEnvironment != null)
+          'provider_environment': providerEnvironment,
       };
 
   @override
-  String toString() =>
-      'KycSession($sessionId, $provider, ${status.wire}, token: ****)';
+  String toString() => 'KycSession($sessionId, $provider, ${status.wire}, '
+      'surface: ${verificationSurface.wire}, token: ****, url: ****)';
 
   @override
   List<Object?> get props => [
@@ -82,6 +124,9 @@ class KycSession extends Equatable {
         expiresAt,
         duplicate,
         clientToken,
+        verificationUrl,
+        verificationSurface,
+        providerEnvironment,
       ];
 }
 
