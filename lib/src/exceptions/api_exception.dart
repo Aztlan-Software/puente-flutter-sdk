@@ -27,6 +27,7 @@ class ApiException extends PuenteException {
     this.code,
     this.body,
     super.requestId,
+    super.idempotencyKey,
   });
 
   /// True for the conventional "retry would help" codes (429 + 5xx).

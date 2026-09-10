@@ -1,3 +1,4 @@
+import '../exceptions/invalid_argument_exception.dart';
 import '../models/onboarding_profile.dart';
 import '../models/region_policy.dart';
 import '../transport/puente_request.dart';
@@ -38,6 +39,7 @@ class OnboardingResource extends ResourceBase {
     String? email,
     String? idempotencyKey,
   }) async {
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'POST',
       path: '/onboarding/applicants',
@@ -46,9 +48,10 @@ class OnboardingResource extends ResourceBase {
         if (phone != null) 'phone': phone,
         if (email != null) 'email': email,
       },
-      idempotencyKey: idempotencyKey ?? newIdempotencyKey(),
+      idempotencyKey: key,
     ));
-    return ApplicantCredentials.fromJson(response.jsonObject);
+    return decode(response, ApplicantCredentials.fromJson,
+        target: 'ApplicantCredentials', idempotencyKey: key);
   }
 
   /// `GET /v1/onboarding/policy` — the region policy for
@@ -64,7 +67,7 @@ class OnboardingResource extends ResourceBase {
         if (residenceCountry != null) 'residence_country': residenceCountry,
       },
     ));
-    return RegionPolicy.fromJson(response.jsonObject);
+    return decode(response, RegionPolicy.fromJson, target: 'RegionPolicy');
   }
 
   /// `GET /v1/onboarding/profile`.
@@ -72,7 +75,8 @@ class OnboardingResource extends ResourceBase {
     final response = await request(
       const PuenteRequest(method: 'GET', path: '/onboarding/profile'),
     );
-    return OnboardingProfile.fromJson(response.jsonObject);
+    return decode(response, OnboardingProfile.fromJson,
+        target: 'OnboardingProfile');
   }
 
   /// `PUT /v1/onboarding/profile` — partial update; only the fields you
@@ -107,15 +111,29 @@ class OnboardingResource extends ResourceBase {
     String? sensitiveIdentifierValue,
     String? documentType,
     String? documentIssuingCountry,
+    String? idempotencyKey,
   }) async {
-    assert(
-      (sensitiveIdentifierType == null) == (sensitiveIdentifierValue == null),
-      'sensitive identifier type and value must be provided together',
-    );
-    assert(
-      (documentType == null) == (documentIssuingCountry == null),
-      'document type and issuing country must be provided together',
-    );
+    // These were `assert`s. Dart strips asserts from release builds, so in
+    // production a half-supplied pair was silently serialized as
+    // `{"type": "ssn", "value": null}` — the exact shape the backend rejects
+    // with an opaque 422, and the one case where the caller most needs a
+    // clear local error. Enforce them at runtime in every build mode.
+    if ((sensitiveIdentifierType == null) !=
+        (sensitiveIdentifierValue == null)) {
+      throw InvalidArgumentException(
+        'sensitive identifier type and value must be provided together',
+        parameter: 'sensitiveIdentifier',
+        value: sensitiveIdentifierType ?? '<null type>',
+      );
+    }
+    if ((documentType == null) != (documentIssuingCountry == null)) {
+      throw InvalidArgumentException(
+        'document type and issuing country must be provided together',
+        parameter: 'document',
+        value: documentType ?? '<null type>',
+      );
+    }
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'PUT',
       path: '/onboarding/profile',
@@ -148,8 +166,10 @@ class OnboardingResource extends ResourceBase {
             'issuing_country': documentIssuingCountry,
           },
       },
+      idempotencyKey: key,
     ));
-    return OnboardingProfile.fromJson(response.jsonObject);
+    return decode(response, OnboardingProfile.fromJson,
+        target: 'OnboardingProfile', idempotencyKey: key);
   }
 
   /// `POST /v1/onboarding/consents` — record acceptance of the CURRENT
@@ -159,7 +179,11 @@ class OnboardingResource extends ResourceBase {
   Future<void> submitConsents({
     required String disclosureVersion,
     required List<String> accepted,
+    String? idempotencyKey,
   }) async {
+    // Recording a consent is a side effect with legal weight, and the
+    // transport retries POSTs on 5xx and timeouts. Without a key, one
+    // retried call could record the acceptance twice (H-14 / H-18).
     await request(PuenteRequest(
       method: 'POST',
       path: '/onboarding/consents',
@@ -167,6 +191,7 @@ class OnboardingResource extends ResourceBase {
         'disclosure_version': disclosureVersion,
         'accepted': accepted,
       },
+      idempotencyKey: idempotencyKey ?? newIdempotencyKey(),
     ));
   }
 }

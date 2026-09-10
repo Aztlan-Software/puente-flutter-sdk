@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:clock/clock.dart';
 import 'package:http/http.dart' as http;
 
 import '../client/puente_config.dart';
+import '../exceptions/invalid_argument_exception.dart';
 import '../exceptions/transport_exception.dart';
 import '../observability/puente_observer.dart';
 import 'puente_request.dart';
@@ -71,7 +71,11 @@ class HttpTransport implements PuenteTransport {
         // A tokenProvider failure must not escape as a raw exception:
         // the SDK's contract is that transport-time failures surface as
         // TransportException so callers only need one catch site.
-        throw TransportException('tokenProvider failed: $e', cause: e);
+        throw TransportException(
+          'tokenProvider failed: $e',
+          cause: e,
+          idempotencyKey: request.idempotencyKey,
+        );
       }
       final started = clock.now();
 
@@ -124,9 +128,15 @@ class HttpTransport implements PuenteTransport {
         // Out of retries on a transport error — translate now.
         final cause = transportError ?? const _UnknownTransportError();
         final stack = transportStack ?? StackTrace.current;
+        // Echo the idempotency key back. This is the ambiguous-outcome
+        // case (H-18): the request may have taken effect server-side even
+        // though we never saw a response. Without the key the caller can
+        // only retry with a freshly minted one, which the server reads as a
+        // second, distinct operation — a double-send.
         final ex = TransportException(
           'HTTP transport failed after $attempt attempt${attempt == 1 ? '' : 's'}: $cause',
           cause: cause,
+          idempotencyKey: request.idempotencyKey,
         );
         _observer.onError(PuenteErrorEvent(
           method: request.method,
@@ -179,7 +189,11 @@ class HttpTransport implements PuenteTransport {
         future =
             _client.patch(url, headers: headers, body: request.encodedBody());
       default:
-        throw ArgumentError.value(method, 'method', 'unsupported');
+        throw InvalidArgumentException(
+          'unsupported HTTP method',
+          parameter: 'method',
+          value: method,
+        );
     }
     return future.timeout(config.timeout);
   }
@@ -230,8 +244,10 @@ class HttpTransport implements PuenteTransport {
     final masked = <String, String>{};
     headers.forEach((k, v) {
       final lower = k.toLowerCase();
-      if (lower == 'authorization' || lower == 'idempotency-key') {
-        masked[k] = _maskValue(v);
+      if (lower == 'authorization') {
+        masked[k] = _maskCredential(v);
+      } else if (lower == 'idempotency-key') {
+        masked[k] = _maskCorrelator(v);
       } else {
         masked[k] = v;
       }
@@ -239,7 +255,24 @@ class HttpTransport implements PuenteTransport {
     return masked;
   }
 
-  String _maskValue(String v) {
+  /// Mask a credential so **no byte of the secret** reaches an observer.
+  ///
+  /// Observers commonly forward to Sentry or a log aggregator, so anything
+  /// emitted here should be assumed to be retained. The previous masking
+  /// kept the last four characters of the bearer value; that is a real (if
+  /// small) leak of key material into a lower-trust sink for zero
+  /// operational benefit — `Idempotency-Key` and `X-Request-Id` are the
+  /// correlators, not the credential. The scheme is preserved because it
+  /// distinguishes a missing header from a malformed one.
+  String _maskCredential(String v) {
+    final space = v.indexOf(' ');
+    if (space > 0) return '${v.substring(0, space)} ***';
+    return '***';
+  }
+
+  /// An idempotency key is a correlator, not a secret — keep enough of it
+  /// to line a log line up with a server-side record.
+  String _maskCorrelator(String v) {
     if (v.length <= 8) return '***';
     return '${v.substring(0, 4)}…${v.substring(v.length - 4)}';
   }
@@ -295,8 +328,3 @@ class _UnknownTransportError implements Exception {
   @override
   String toString() => 'unknown transport error';
 }
-
-// `jsonEncode` is referenced indirectly via PuenteRequest.encodedBody.
-// Keep the import to satisfy the analyzer when this file grows.
-// ignore: unused_element
-const _unused = jsonEncode;

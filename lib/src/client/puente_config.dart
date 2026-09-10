@@ -125,6 +125,47 @@ class PuenteConfig {
         'short-lived session tokens).',
       );
     }
+    _assertTransportIsEncrypted();
+  }
+
+  /// Refuse a cleartext base URL for anything that is not a local backend.
+  ///
+  /// [baseUrlOverride] exists so a developer can point at a local
+  /// `puente-api` over `http://127.0.0.1:8080/v1`. Nothing previously
+  /// stopped that same override from carrying a production `sk_` key to an
+  /// arbitrary `http://` host, where the bearer token, the CLABE, the
+  /// beneficiary name, and the raw SSN/ITIN/CURP submitted through
+  /// `onboarding.updateProfile` all travel in the clear and are trivially
+  /// modifiable in transit.
+  ///
+  /// Loopback stays allowed — it does not leave the machine — as do the
+  /// `mock` environment and any non-HTTP scheme (the mock sentinel).
+  void _assertTransportIsEncrypted() {
+    if (environment == PuenteEnvironment.mock) return;
+    final url = baseUrl;
+    if (url.scheme != 'http') return;
+    if (_isLoopback(url.host)) return;
+    throw ArgumentError.value(
+      url.toString(),
+      'baseUrlOverride',
+      'refusing a cleartext http:// base URL for a non-loopback host — '
+          'credentials and PII would be sent unencrypted. Use https://, or '
+          'point at localhost for local development.',
+    );
+  }
+
+  static bool _isLoopback(String host) {
+    final h = host.toLowerCase();
+    if (h == 'localhost' || h == '::1' || h == '[::1]') return true;
+    // Any 127.0.0.0/8 address.
+    final v4 = h.split('.');
+    if (v4.length == 4 && v4[0] == '127') {
+      return v4.every((p) {
+        final n = int.tryParse(p);
+        return n != null && n >= 0 && n <= 255;
+      });
+    }
+    return false;
   }
 
   /// Convenience for an in-memory mock client.
@@ -208,4 +249,4 @@ class PuenteConfig {
 
 /// Current SDK package version, mirrored from pubspec.yaml. Bump on
 /// release; CI checks the two are in sync.
-const String packageVersion = '0.5.0';
+const String packageVersion = '0.6.0';

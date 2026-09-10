@@ -20,8 +20,8 @@ class ClabeResource extends ResourceBase {
   Future<ClabeInfo> lookup(String clabe) async {
     final response = await request(PuenteRequest(
       method: 'GET',
-      path: '/clabe/$clabe',
+      path: '/clabe/${pathSegment(clabe, 'clabe')}',
     ));
-    return ClabeInfo.fromJson(response.jsonObject);
+    return decode(response, ClabeInfo.fromJson, target: 'ClabeInfo');
   }
 }

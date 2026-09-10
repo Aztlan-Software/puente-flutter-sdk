@@ -58,12 +58,8 @@ class DepositsResource extends ResourceBase {
       method: 'GET',
       path: '/deposit-assets',
     ));
-    final data =
-        response.jsonObject['data'] as List<dynamic>? ?? const <dynamic>[];
-    return data
-        .whereType<Map<String, dynamic>>()
-        .map(SupportedDepositAsset.fromJson)
-        .toList(growable: false);
+    return decodeList(response, SupportedDepositAsset.fromJson,
+        target: 'SupportedDepositAsset');
   }
 
   /// `POST /v1/deposit-sessions` — open a deposit session for [userId].
@@ -85,6 +81,7 @@ class DepositsResource extends ResourceBase {
     String? displayCurrency,
     String? idempotencyKey,
   }) async {
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'POST',
       path: '/deposit-sessions',
@@ -96,9 +93,10 @@ class DepositsResource extends ResourceBase {
         'source_amount_minor': sourceAmountMinor,
         if (displayCurrency != null) 'display_currency': displayCurrency,
       },
-      idempotencyKey: idempotencyKey ?? newIdempotencyKey(),
+      idempotencyKey: key,
     ));
-    return DepositSession.fromJson(response.jsonObject);
+    return decode(response, DepositSession.fromJson,
+        target: 'DepositSession', idempotencyKey: key);
   }
 
   /// `GET /v1/deposit-sessions/{id}` — authoritative current state; the
@@ -106,9 +104,9 @@ class DepositsResource extends ResourceBase {
   Future<DepositSession> retrieve(String id) async {
     final response = await request(PuenteRequest(
       method: 'GET',
-      path: '/deposit-sessions/$id',
+      path: '/deposit-sessions/${pathSegment(id, 'id')}',
     ));
-    return DepositSession.fromJson(response.jsonObject);
+    return decode(response, DepositSession.fromJson, target: 'DepositSession');
   }
 
   /// `POST /v1/deposit-sessions/{id}/quotes` — attach (or refresh) a
@@ -119,13 +117,15 @@ class DepositsResource extends ResourceBase {
   /// amounts and a hard [DepositQuote.expiresAt] — past it, `prepare`
   /// answers `409 quote_expired` ([StaleQuoteException]).
   Future<DepositSession> getQuote(String id, {String? idempotencyKey}) async {
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'POST',
-      path: '/deposit-sessions/$id/quotes',
+      path: '/deposit-sessions/${pathSegment(id, 'id')}/quotes',
       body: const <String, dynamic>{},
-      idempotencyKey: idempotencyKey ?? newIdempotencyKey(),
+      idempotencyKey: key,
     ));
-    return DepositSession.fromJson(response.jsonObject);
+    return decode(response, DepositSession.fromJson,
+        target: 'DepositSession', idempotencyKey: key);
   }
 
   /// `POST /v1/deposit-sessions/{id}/prepare` — lock the route and build
@@ -138,13 +138,15 @@ class DepositsResource extends ResourceBase {
   /// `409 quote_expired` (re-quote first) and `ApiException` with code
   /// `quote_required` when no quote exists yet.
   Future<PreparedDeposit> prepare(String id, {String? idempotencyKey}) async {
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'POST',
-      path: '/deposit-sessions/$id/prepare',
+      path: '/deposit-sessions/${pathSegment(id, 'id')}/prepare',
       body: const <String, dynamic>{},
-      idempotencyKey: idempotencyKey ?? newIdempotencyKey(),
+      idempotencyKey: key,
     ));
-    return PreparedDeposit.fromJson(response.jsonObject);
+    return decode(response, PreparedDeposit.fromJson,
+        target: 'PreparedDeposit', idempotencyKey: key);
   }
 
   /// `POST /v1/deposit-sessions/{id}/submission` — report that the wallet
@@ -158,13 +160,15 @@ class DepositsResource extends ResourceBase {
     required String transactionHash,
     String? idempotencyKey,
   }) async {
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'POST',
-      path: '/deposit-sessions/$id/submission',
+      path: '/deposit-sessions/${pathSegment(id, 'id')}/submission',
       body: <String, dynamic>{'transaction_hash': transactionHash},
-      idempotencyKey: idempotencyKey ?? newIdempotencyKey(),
+      idempotencyKey: key,
     ));
-    return DepositSession.fromJson(response.jsonObject);
+    return decode(response, DepositSession.fromJson,
+        target: 'DepositSession', idempotencyKey: key);
   }
 
   /// `GET /v1/deposit-sessions/{id}/events` — the append-only transition
@@ -172,14 +176,9 @@ class DepositsResource extends ResourceBase {
   Future<List<DepositEvent>> events(String id) async {
     final response = await request(PuenteRequest(
       method: 'GET',
-      path: '/deposit-sessions/$id/events',
+      path: '/deposit-sessions/${pathSegment(id, 'id')}/events',
     ));
-    final data =
-        response.jsonObject['data'] as List<dynamic>? ?? const <dynamic>[];
-    return data
-        .whereType<Map<String, dynamic>>()
-        .map(DepositEvent.fromJson)
-        .toList(growable: false);
+    return decodeList(response, DepositEvent.fromJson, target: 'DepositEvent');
   }
 
   /// `GET /v1/deposits` — list deposit sessions, newest first.
@@ -200,12 +199,8 @@ class DepositsResource extends ResourceBase {
         if (startingAfter != null) 'starting_after': startingAfter,
       },
     ));
-    final data =
-        response.jsonObject['data'] as List<dynamic>? ?? const <dynamic>[];
-    return data
-        .whereType<Map<String, dynamic>>()
-        .map(DepositSession.fromJson)
-        .toList(growable: false);
+    return decodeList(response, DepositSession.fromJson,
+        target: 'DepositSession');
   }
 
   /// Stream the lifecycle of a deposit session by polling [retrieve] on a
@@ -216,13 +211,20 @@ class DepositsResource extends ResourceBase {
   /// [DepositStatus.isTerminal] is true — settled ([DepositStatus.credited]
   /// or any post-credit sweep state), any failure terminal, or
   /// `manual_review`. `compliance_hold` is emitted but does NOT stop the
-  /// stream (holds release). Also completes after [timeout] even if no
+  /// stream (holds release). Also stops after [timeout] even if no
   /// terminal state was reached, so a stuck server doesn't leak a
   /// subscription.
+  ///
+  /// Like `TransfersResource.watch`, a timeout completes the stream
+  /// normally by default — indistinguishable from settlement. Pass
+  /// [throwOnTimeout] to receive a [TimeoutException] instead, and always
+  /// confirm a credit with [retrieve] or a webhook before telling a user
+  /// their funds arrived.
   Stream<DepositSession> watch(
     String id, {
     Duration pollInterval = const Duration(seconds: 1),
     Duration timeout = const Duration(minutes: 10),
+    bool throwOnTimeout = false,
   }) async* {
     final deadline = clock.now().add(timeout);
     DepositStatus? lastStatus;
@@ -234,6 +236,14 @@ class DepositsResource extends ResourceBase {
       }
       if (session.status.isTerminal) return;
       await Future<void>.delayed(pollInterval);
+    }
+    if (throwOnTimeout) {
+      throw TimeoutException(
+        'deposit $id did not reach a terminal state within '
+        '${timeout.inSeconds}s (last observed: ${lastStatus?.name ?? 'none'})'
+        ' — it may still credit; confirm with deposits.retrieve or a webhook',
+        timeout,
+      );
     }
   }
 
@@ -253,12 +263,14 @@ class DepositsResource extends ResourceBase {
     String scenario, {
     String? idempotencyKey,
   }) async {
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'POST',
-      path: '/deposit-sessions/$id/mock-events',
+      path: '/deposit-sessions/${pathSegment(id, 'id')}/mock-events',
       body: <String, dynamic>{'scenario': scenario},
-      idempotencyKey: idempotencyKey ?? newIdempotencyKey(),
+      idempotencyKey: key,
     ));
-    return DepositSession.fromJson(response.jsonObject);
+    return decode(response, DepositSession.fromJson,
+        target: 'DepositSession', idempotencyKey: key);
   }
 }

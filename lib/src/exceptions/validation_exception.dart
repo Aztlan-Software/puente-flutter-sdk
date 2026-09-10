@@ -18,6 +18,7 @@ class ValidationException extends ApiException {
     super.code,
     super.body,
     super.requestId,
+    super.idempotencyKey,
   });
 
   @override

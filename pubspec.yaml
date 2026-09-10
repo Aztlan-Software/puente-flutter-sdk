@@ -1,5 +1,5 @@
 name: puente_railway
-version: 0.5.0
+version: 0.6.0
 description: >-
   Official Dart/Flutter SDK for Puente Railway — the Solana + Etherfuse
   settlement rail behind Pesito. Send USD→MXN remittances, fetch quotes,

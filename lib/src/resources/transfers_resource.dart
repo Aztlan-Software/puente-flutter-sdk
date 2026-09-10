@@ -43,6 +43,7 @@ class TransfersResource extends ResourceBase {
     String? receiverUserId,
     String? idempotencyKey,
   }) async {
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'POST',
       path: '/transfers',
@@ -55,9 +56,10 @@ class TransfersResource extends ResourceBase {
         if (senderUserId != null) 'sender_user_id': senderUserId,
         if (receiverUserId != null) 'receiver_user_id': receiverUserId,
       },
-      idempotencyKey: idempotencyKey ?? newIdempotencyKey(),
+      idempotencyKey: key,
     ));
-    return Transfer.fromJson(response.jsonObject);
+    return decode(response, Transfer.fromJson,
+        target: 'Transfer', idempotencyKey: key);
   }
 
   /// Create a transfer from a [TransferIntent] — the typed request body
@@ -70,13 +72,15 @@ class TransfersResource extends ResourceBase {
     TransferIntent intent, {
     String? idempotencyKey,
   }) async {
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'POST',
       path: '/transfers',
       body: intent.toJson(),
-      idempotencyKey: idempotencyKey ?? newIdempotencyKey(),
+      idempotencyKey: key,
     ));
-    return Transfer.fromJson(response.jsonObject);
+    return decode(response, Transfer.fromJson,
+        target: 'Transfer', idempotencyKey: key);
   }
 
   /// Same as [create] but takes the full [Quote] so the SDK can short-circuit
@@ -115,9 +119,9 @@ class TransfersResource extends ResourceBase {
   Future<Transfer> retrieve(String id) async {
     final response = await request(PuenteRequest(
       method: 'GET',
-      path: '/transfers/$id',
+      path: '/transfers/${pathSegment(id, 'id')}',
     ));
-    return Transfer.fromJson(response.jsonObject);
+    return decode(response, Transfer.fromJson, target: 'Transfer');
   }
 
   /// Retrieve the settlement receipt for a settled transfer —
@@ -129,9 +133,10 @@ class TransfersResource extends ResourceBase {
   Future<TransferReceipt> receipt(String transferId) async {
     final response = await request(PuenteRequest(
       method: 'GET',
-      path: '/transfers/$transferId/receipt',
+      path: '/transfers/${pathSegment(transferId, 'transferId')}/receipt',
     ));
-    return TransferReceipt.fromJson(response.jsonObject);
+    return decode(response, TransferReceipt.fromJson,
+        target: 'TransferReceipt');
   }
 
   /// List recent transfers, newest first.
@@ -147,12 +152,7 @@ class TransfersResource extends ResourceBase {
         if (startingAfter != null) 'starting_after': startingAfter,
       },
     ));
-    final body = response.jsonObject;
-    final data = body['data'] as List<dynamic>? ?? const <dynamic>[];
-    return data
-        .whereType<Map<String, dynamic>>()
-        .map(Transfer.fromJson)
-        .toList(growable: false);
+    return decodeList(response, Transfer.fromJson, target: 'Transfer');
   }
 
   /// Cancel a transfer before it reaches a terminal state.
@@ -161,12 +161,14 @@ class TransfersResource extends ResourceBase {
   /// code `terminal_state` (409) when the transfer is already settled
   /// or failed.
   Future<Transfer> cancel(String id, {String? idempotencyKey}) async {
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'POST',
-      path: '/transfers/$id/cancel',
-      idempotencyKey: idempotencyKey ?? newIdempotencyKey(),
+      path: '/transfers/${pathSegment(id, 'id')}/cancel',
+      idempotencyKey: key,
     ));
-    return Transfer.fromJson(response.jsonObject);
+    return decode(response, Transfer.fromJson,
+        target: 'Transfer', idempotencyKey: key);
   }
 
   /// Stream the lifecycle of a transfer by polling [retrieve] on a
@@ -177,13 +179,34 @@ class TransfersResource extends ResourceBase {
   ///
   /// The stream emits each distinct state and completes when the
   /// transfer reaches [TransferStatus.settled], [TransferStatus.failed],
-  /// or [TransferStatus.cancelled]. It also completes after [timeout]
-  /// even if no terminal state is reached, so a stuck server doesn't
-  /// leak a subscription.
+  /// or [TransferStatus.cancelled]. It also stops after [timeout] even if
+  /// no terminal state is reached, so a stuck server doesn't leak a
+  /// subscription.
+  ///
+  /// ## Distinguishing "settled" from "gave up"
+  ///
+  /// By default the stream *completes normally* on timeout, which is
+  /// indistinguishable from reaching a terminal state: a UI that renders
+  /// `onDone` as success will report a still-in-flight transfer as finished.
+  /// For money movement that is the wrong default, but changing it would
+  /// break existing callers, so it is opt-in:
+  ///
+  /// ```dart
+  /// await for (final t in puente.transfers.watch(id, throwOnTimeout: true)) {
+  ///   render(t);
+  /// }
+  /// // Now `onError` receives a TimeoutException instead of a silent onDone.
+  /// ```
+  ///
+  /// Set [throwOnTimeout] to `true` to have the stream emit a
+  /// [TimeoutException] instead. Either way, always confirm the final state
+  /// with [retrieve] or a webhook before telling a user their money
+  /// arrived — the poll gives up, the transfer does not.
   Stream<Transfer> watch(
     String id, {
     Duration pollInterval = const Duration(seconds: 1),
     Duration timeout = const Duration(minutes: 2),
+    bool throwOnTimeout = false,
   }) async* {
     final deadline = clock.now().add(timeout);
     TransferStatus? lastStatus;
@@ -195,6 +218,15 @@ class TransfersResource extends ResourceBase {
       }
       if (t.status.isTerminal) return;
       await Future<void>.delayed(pollInterval);
+    }
+    if (throwOnTimeout) {
+      throw TimeoutException(
+        'transfer $id did not reach a terminal state within '
+        '${timeout.inSeconds}s (last observed: '
+        '${lastStatus?.wire ?? 'no state'}) — it may still settle; '
+        'confirm with transfers.retrieve or a webhook',
+        timeout,
+      );
     }
   }
 }

@@ -1,11 +1,23 @@
 # Contract Status — `puente_railway` SDK ↔ Puente backend
 
+> **⚠️ SUPERSEDED (2026-08-26).** The snapshot below is from 2026-06-11 and
+> describes the v0.1.0 era. It is **out of date**: the SDK is now v0.5.0, the
+> `/v1` quotes/transfers/beneficiaries/onboarding/KYC/wallet-readiness routes
+> are live on Puente `main`, the deposits surface ships on
+> `feature/external-wallet-deposits` behind `DEPOSITS_ENABLED`, and
+> `test/integration/deposits_live_backend_test.dart` walks the full deposit
+> flow against a running `puente-api`. pesito consumes this package (git-pinned
+> to `a089c4d`). Do not treat the "none of the methods work" TL;DR or the
+> ❌-heavy route table below as current; they are retained only as history.
+> See [`portal-migration-impact.md`](portal-migration-impact.md) for the SDK's
+> (nil) impact under the Turnkey → Portal backend signer migration.
+
 Authoritative snapshot of how the SDK lines up against the
 `Aztlan-Software/Puente` Rust workspace, as of 2026-06-11. This file is
 the dedup target — if you're about to write an issue about the SDK being
 broken, check here first.
 
-## TL;DR
+## TL;DR (2026-06-11 — superseded, see banner above)
 
 This SDK was authored against an API surface the Puente backend has not
 yet implemented. **None of the resource methods (`quotes`, `transfers`,

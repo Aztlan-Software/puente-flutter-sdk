@@ -21,13 +21,15 @@ class KycResource extends ResourceBase {
   /// `duplicate == true` instead of creating a second one. The response's
   /// [KycSession.clientToken] is the one-time provider handoff token.
   Future<KycSession> createSession({String? idempotencyKey}) async {
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'POST',
       path: '/kyc/sessions',
       body: const <String, dynamic>{},
-      idempotencyKey: idempotencyKey ?? newIdempotencyKey(),
+      idempotencyKey: key,
     ));
-    return KycSession.fromJson(response.jsonObject);
+    return decode(response, KycSession.fromJson,
+        target: 'KycSession', idempotencyKey: key);
   }
 
   /// `GET /v1/kyc/sessions/current` — the latest session (any state).
@@ -38,7 +40,7 @@ class KycResource extends ResourceBase {
     final response = await request(
       const PuenteRequest(method: 'GET', path: '/kyc/sessions/current'),
     );
-    return KycSession.fromJson(response.jsonObject);
+    return decode(response, KycSession.fromJson, target: 'KycSession');
   }
 
   /// `POST /v1/kyc/sessions/{id}/mock-events` — drive the MOCK
@@ -54,16 +56,20 @@ class KycResource extends ResourceBase {
     required String sessionId,
     required String scenario,
     String? reason,
+    String? idempotencyKey,
   }) async {
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'POST',
-      path: '/kyc/sessions/$sessionId/mock-events',
+      path: '/kyc/sessions/${pathSegment(sessionId, 'sessionId')}/mock-events',
       body: <String, dynamic>{
         'scenario': scenario,
         if (reason != null) 'reason': reason,
       },
+      idempotencyKey: key,
     ));
-    return MockKycEventResult.fromJson(response.jsonObject);
+    return decode(response, MockKycEventResult.fromJson,
+        target: 'MockKycEventResult', idempotencyKey: key);
   }
 
   /// `GET /v1/wallet/readiness` — the backend-authoritative wallet gate.
@@ -73,6 +79,7 @@ class KycResource extends ResourceBase {
     final response = await request(
       const PuenteRequest(method: 'GET', path: '/wallet/readiness'),
     );
-    return WalletReadiness.fromJson(response.jsonObject);
+    return decode(response, WalletReadiness.fromJson,
+        target: 'WalletReadiness');
   }
 }

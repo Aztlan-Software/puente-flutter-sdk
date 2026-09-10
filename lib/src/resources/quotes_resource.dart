@@ -40,6 +40,7 @@ class QuotesResource extends ResourceBase {
     String? beneficiaryCountry,
     String? idempotencyKey,
   }) async {
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'POST',
       path: '/quotes',
@@ -54,8 +55,9 @@ class QuotesResource extends ResourceBase {
         if (beneficiaryCountry != null)
           'beneficiary_country': beneficiaryCountry,
       },
-      idempotencyKey: idempotencyKey ?? newIdempotencyKey(),
+      idempotencyKey: key,
     ));
-    return Quote.fromJson(response.jsonObject);
+    return decode(response, Quote.fromJson,
+        target: 'Quote', idempotencyKey: key);
   }
 }

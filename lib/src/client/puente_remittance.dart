@@ -87,10 +87,12 @@ class PuenteRemittance {
     String transferId, {
     Duration pollInterval = const Duration(seconds: 1),
     Duration timeout = const Duration(minutes: 2),
+    bool throwOnTimeout = false,
   }) =>
       _transfers.watch(
         transferId,
         pollInterval: pollInterval,
         timeout: timeout,
+        throwOnTimeout: throwOnTimeout,
       );
 }

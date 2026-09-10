@@ -294,7 +294,14 @@ void main() {
   });
 
   group('DepositsResource malformed responses', () {
-    test('non-session 200 body throws a typed FormatException', () async {
+    // These used to assert a raw `FormatException` escaped the SDK. That
+    // contradicted the documented contract on PuenteException ("SDK calls
+    // never throw raw Exception ... or upstream package errors"), so a
+    // caller who wrote `on PuenteException` crashed on any backend wire
+    // change. The decode failure is now a DecodeException, which IS a
+    // PuenteException — and still exposes the underlying error as `cause`.
+    test('non-session 200 body throws DecodeException, not a raw error',
+        () async {
       final resource = DepositsResource(_StaticTransport(const PuenteResponse(
         statusCode: 200,
         headers: <String, String>{'content-type': 'application/json'},
@@ -302,11 +309,14 @@ void main() {
       )));
       await expectLater(
         resource.retrieve('dep_x'),
-        throwsFormatException,
+        throwsA(isA<DecodeException>()
+            .having((e) => e, 'is a PuenteException', isA<PuenteException>())
+            .having((e) => e.target, 'target', 'DepositSession')
+            .having((e) => e.cause, 'cause', isA<FormatException>())),
       );
     });
 
-    test('prepare response without a transaction throws FormatException',
+    test('prepare response without a transaction throws DecodeException',
         () async {
       final resource = DepositsResource(_StaticTransport(const PuenteResponse(
         statusCode: 200,
@@ -316,7 +326,12 @@ void main() {
       )));
       await expectLater(
         resource.prepare('dep_x'),
-        throwsFormatException,
+        throwsA(isA<DecodeException>()
+            .having((e) => e, 'is a PuenteException', isA<PuenteException>())
+            .having((e) => e.target, 'target', 'PreparedDeposit')
+            // A prepare failure must carry the key back: the POST may have
+            // taken effect server-side even though the body did not decode.
+            .having((e) => e.idempotencyKey, 'idempotencyKey', isNotNull)),
       );
     });
   });

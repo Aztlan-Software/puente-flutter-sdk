@@ -7,6 +7,8 @@ library;
 
 export 'api_exception.dart';
 export 'auth_exception.dart';
+export 'decode_exception.dart';
+export 'invalid_argument_exception.dart';
 export 'puente_exception.dart';
 export 'rate_limit_exception.dart';
 export 'stale_quote_exception.dart';

@@ -16,7 +16,12 @@ class TransportException extends PuenteException {
   final Object? cause;
 
   /// Build a [TransportException].
-  const TransportException(super.message, {this.cause, super.requestId});
+  const TransportException(
+    super.message, {
+    this.cause,
+    super.requestId,
+    super.idempotencyKey,
+  });
 
   @override
   String toString() => 'TransportException: $message'

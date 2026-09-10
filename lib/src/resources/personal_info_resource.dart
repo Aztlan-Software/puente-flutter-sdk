@@ -18,7 +18,7 @@ class PersonalInfoResource extends ResourceBase {
     final response = await request(
       const PuenteRequest(method: 'GET', path: '/me/personal-info'),
     );
-    return PersonalInfo.fromJson(response.jsonObject);
+    return decode(response, PersonalInfo.fromJson, target: 'PersonalInfo');
   }
 
   /// `POST /v1/me/personal-info/correction-requests` — request a change
@@ -30,7 +30,12 @@ class PersonalInfoResource extends ResourceBase {
   Future<CorrectionRequestReceipt> requestCorrection({
     required String field,
     String? note,
+    String? idempotencyKey,
   }) async {
+    // Filing a correction request creates a reviewable record. The transport
+    // retries POSTs on 5xx and timeouts, so without a key a single tap could
+    // open two tickets for the same change (H-14 / H-18).
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'POST',
       path: '/me/personal-info/correction-requests',
@@ -38,7 +43,9 @@ class PersonalInfoResource extends ResourceBase {
         'field': field,
         if (note != null) 'note': note,
       },
+      idempotencyKey: key,
     ));
-    return CorrectionRequestReceipt.fromJson(response.jsonObject);
+    return decode(response, CorrectionRequestReceipt.fromJson,
+        target: 'CorrectionRequestReceipt', idempotencyKey: key);
   }
 }

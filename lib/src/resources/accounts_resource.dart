@@ -30,6 +30,7 @@ class AccountsResource extends ResourceBase {
     String? country,
     String? idempotencyKey,
   }) async {
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'POST',
       path: '/accounts',
@@ -45,18 +46,19 @@ class AccountsResource extends ResourceBase {
         if (postalCode != null) 'postal_code': postalCode,
         if (country != null) 'country': country,
       },
-      idempotencyKey: idempotencyKey ?? newIdempotencyKey(),
+      idempotencyKey: key,
     ));
-    return Account.fromJson(response.jsonObject);
+    return decode(response, Account.fromJson,
+        target: 'Account', idempotencyKey: key);
   }
 
   /// Retrieve an account by id.
   Future<Account> retrieve(String id) async {
     final response = await request(PuenteRequest(
       method: 'GET',
-      path: '/accounts/$id',
+      path: '/accounts/${pathSegment(id, 'id')}',
     ));
-    return Account.fromJson(response.jsonObject);
+    return decode(response, Account.fromJson, target: 'Account');
   }
 
   /// Partial update (only fields the server allows merchants to
@@ -65,16 +67,20 @@ class AccountsResource extends ResourceBase {
     String id, {
     String? phone,
     String? email,
+    String? idempotencyKey,
   }) async {
+    final key = idempotencyKey ?? newIdempotencyKey();
     final response = await request(PuenteRequest(
       method: 'PATCH',
-      path: '/accounts/$id',
+      path: '/accounts/${pathSegment(id, 'id')}',
       body: <String, dynamic>{
         if (phone != null) 'phone': phone,
         if (email != null) 'email': email,
       },
+      idempotencyKey: key,
     ));
-    return Account.fromJson(response.jsonObject);
+    return decode(response, Account.fromJson,
+        target: 'Account', idempotencyKey: key);
   }
 
   String _isoDate(DateTime d) {
