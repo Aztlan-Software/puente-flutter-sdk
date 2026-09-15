@@ -41,6 +41,7 @@ void main() {
         sourceAmount: const Money.fromMinor(10000, Currency.usd),
         targetCurrency: Currency.mxn,
       );
+      // $100 at 1% = exactly the $1.00 corridor cap.
       expect(
         q.fee,
         const Money.fromMinor(
@@ -58,31 +59,87 @@ void main() {
       expect(q.currencyLeg, CurrencyLeg.cetes);
     });
 
-    test(
-        'MXN-source fee is the \$1.00 USD equivalent at the fixture rate, '
-        'never \$1.00 MXN', () async {
-      // Region-change corridor (MXN wallet -> USD): the backend policy is a
-      // \$1.00 USD flat fee. Charged in the source currency at the 19.73
-      // fixture rate that is 1973 centavos (\$19.73 MXN) — a literal 100
-      // MXN minor units would silently reprice the fee to ~US\$0.05.
+    test('USD-source fee is 1% of the amount below the \$1 cap', () async {
+      // $50 at 1% = $0.50 — under the cap, the percentage applies.
       final q = await client.quotes.create(
+        sourceAmount: const Money.fromMinor(5000, Currency.usd),
+        targetCurrency: Currency.mxn,
+      );
+      expect(q.fee, const Money.fromMinor(50, Currency.usd));
+      expect(q.totalCost, const Money.fromMinor(5050, Currency.usd));
+    });
+
+    test('USD-source fee caps at \$1.00 for large amounts', () async {
+      // $10,000 at 1% would be $100 — the corridor cap holds it to $1.
+      final q = await client.quotes.create(
+        sourceAmount: const Money.fromMinor(1000000, Currency.usd),
+        targetCurrency: Currency.mxn,
+      );
+      expect(
+          q.fee,
+          const Money.fromMinor(
+              MockTransport.crossBorderFlatFeeUsdFixtureMinor, Currency.usd));
+    });
+
+    test('fee computation survives absurdly large amounts without overflow',
+        () async {
+      // ~$90T: far above the cap's break-even, close enough to 2^63 that
+      // naive amount*rate math would wrap. The fixture must still return
+      // exactly the cap and keep every emitted field non-negative.
+      final q = await client.quotes.create(
+        sourceAmount: const Money.fromMinor(9007199254740992, Currency.usd),
+        targetCurrency: Currency.mxn,
+      );
+      expect(
+          q.fee,
+          const Money.fromMinor(
+              MockTransport.crossBorderFlatFeeUsdFixtureMinor, Currency.usd));
+      expect(q.totalCost!.minorUnits, greaterThan(0));
+      expect(q.targetAmount.minorUnits, greaterThan(0));
+    });
+
+    test(
+        'MXN-source fee is 1% up to the \$15.00 MXN cap, '
+        'denominated in MXN', () async {
+      // Region-change corridor (MXN wallet -> USD). The MXN-source cap is
+      // $15.00 MXN (1500 centavos) in the SOURCE currency — never a
+      // fixture-rate conversion, never $15 USD.
+      final belowCap = await client.quotes.create(
         sourceAmount: const Money.fromMinor(100000, Currency.mxn),
         targetCurrency: Currency.usd,
       );
-      expect(q.fee, const Money.fromMinor(1973, Currency.mxn));
-      expect(q.feeBreakdown!.flatFee.minorUnits, 1973);
-      expect(q.totalCost, const Money.fromMinor(101973, Currency.mxn));
+      // $1000 MXN at 1% = $10.00 MXN — under the cap.
+      expect(belowCap.fee, const Money.fromMinor(1000, Currency.mxn));
+      expect(belowCap.totalCost,
+          const Money.fromMinor(101000, Currency.mxn));
+
+      final atCap = await client.quotes.create(
+        sourceAmount: const Money.fromMinor(500000, Currency.mxn),
+        targetCurrency: Currency.usd,
+      );
+      // $5000 MXN would be $50 at 1% — the cap holds it to $15.00 MXN.
+      expect(atCap.fee,
+          const Money.fromMinor(MockTransport.remittanceCapMxnFixtureMinor,
+              Currency.mxn));
     });
 
-    test('USDC-source fee is \$1.00 USD in 6-decimal minor units', () async {
-      // USDC scales to 6 decimals: \$1.00 = 1_000_000 minor units, not the
-      // raw 100 of the USD fixture constant.
-      final q = await client.quotes.create(
+    test('USDC-source fee is 1% below, then capped in 6-decimal minor units',
+        () async {
+      // 10 USDC at 1% = 0.10 USDC = 100_000 minor units (6dp) — under the
+      // $1.00 cap, which on this source is 1_000_000 minor units.
+      final small = await client.quotes.create(
         sourceAmount: const Money.fromMinor(10000000, Currency.usdc),
         targetCurrency: Currency.mxn,
       );
-      expect(q.fee, const Money.fromMinor(1000000, Currency.usdc));
-      expect(q.feeBreakdown!.flatFee.minorUnits, 1000000);
+      expect(small.fee, const Money.fromMinor(100000, Currency.usdc));
+
+      final big = await client.quotes.create(
+        sourceAmount: const Money.fromMinor(500000000, Currency.usdc),
+        targetCurrency: Currency.mxn,
+      );
+      // 500 USDC would be 5 USDC at 1% — capped at $1.00 = 1_000_000.
+      expect(big.fee, const Money.fromMinor(1000000, Currency.usdc));
+      expect(big.feeBreakdown!.flatFee.minorUnits, 1000000);
     });
 
     test('transfer created from a quote uses the quote amounts verbatim',

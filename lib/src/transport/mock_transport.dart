@@ -29,11 +29,12 @@ import 'puente_transport.dart';
 /// * Same-currency quotes → `p2p_same_region`, `fx_rate "1"`, destination
 ///   equals source, and a **zero** total fee (the backend's default
 ///   same-region policy).
-/// * Cross-currency quotes → `cross_border`, a flat fee anchored to
-///   $1.00 USD ([crossBorderFlatFeeUsdFixtureMinor]) charged in minor
-///   units of the source currency at the fixture rate
-///   (fx-spread and vendor fixtures are 0), and a destination amount
-///   converted at the fixed [_fixtureRates] table.
+/// * Cross-currency quotes → `cross_border`, remittance pricing mirroring
+///   the backend's default policy: `min(ceil(1% × amount), corridor cap)`
+///   in minor units of the source currency — capped at $1.00 for USD/USDC
+///   sources and $15.00 MXN for MXN sources (fx-spread and vendor fixtures
+///   are 0), plus a destination amount converted at the fixed
+///   [_fixtureRates] table.
 /// * Transfers always take their amounts and fees **verbatim from the
 ///   stored quote** they reference — the mock never recomputes them.
 ///
@@ -169,15 +170,24 @@ class MockTransport implements PuenteTransport {
     'MXN->USDC': 1 / 19.73,
   };
 
-  /// Dev fixture: cross-border flat fee, anchored to **$1.00 USD** — the
-  /// backend's default cross-border policy (`100` = one dollar in USD
-  /// minor units). The fee stays *denominated* in the source currency on
-  /// the wire (matching the backend's `fee_breakdown.currency` contract),
-  /// so non-USD-source quotes charge the $1.00-USD equivalent at the
-  /// fixture rate: an MXN-source quote charges ~$19.73 MXN, never
-  /// $1.00 MXN. Mirrors the backend's *default* policy shape only — the
-  /// real fee ALWAYS comes from the backend quote.
+  /// Dev fixture: remittance fee policy mirroring the backend's defaults.
+  /// The user-facing total fee is `min(ceil(rate × amount), corridor cap)`
+  /// in minor units of the source currency:
+  ///
+  /// * [remittanceRateBpsFixture] — the percentage (100 = 1%).
+  /// * USD/USDC sources cap at **$1.00**
+  ///   ([crossBorderFlatFeeUsdFixtureMinor] = `100` USD minor; a USDC
+  ///   source scales it by 10^4 so "$1" never becomes "0.0001 tokens").
+  /// * MXN sources cap at **$15.00 MXN**
+  ///   ([remittanceCapMxnFixtureMinor] = `1500` centavos) — the cap is
+  ///   denominated in the SOURCE currency, never converted at the fixture
+  ///   rate.
+  ///
+  /// Mirrors the backend's *default* policy shape only — the real fee
+  /// ALWAYS comes from the backend quote.
+  static const int remittanceRateBpsFixture = 100;
   static const int crossBorderFlatFeeUsdFixtureMinor = 100;
+  static const int remittanceCapMxnFixtureMinor = 1500;
 
   /// How long a mock quote stays valid. Mirrors the backend default.
   static const Duration _quoteTtl = Duration(minutes: 2);
@@ -357,7 +367,7 @@ class MockTransport implements PuenteTransport {
           (src.minorUnits * tgtCurrency.scale * rate ~/ src.currency.scale)
               .toInt();
       fxRate = rate.toString();
-      flatFeeMinor = _usdAnchoredFlatFeeMinor(src.currency);
+      flatFeeMinor = _remittanceFeeMinor(src.currency, src.minorUnits);
       transferType = 'cross_border';
       currencyLeg = tgtCurrency == Currency.mxn ? 'CETES' : 'USDC';
     }
@@ -401,25 +411,38 @@ class MockTransport implements PuenteTransport {
     return _jsonResponse(200, quote);
   }
 
-  /// [crossBorderFlatFeeUsdFixtureMinor] ($1.00 USD) expressed in [source]
-  /// minor units at the fixture rate, floored the same way destination
-  /// amounts are. Keeps the wire denomination in the source currency while
-  /// anchoring the fee's VALUE to the USD policy.
-  int _usdAnchoredFlatFeeMinor(Currency source) {
-    if (source == Currency.usd) return crossBorderFlatFeeUsdFixtureMinor;
-    final rate = _rates['USD->${source.code}'];
-    if (rate == null) {
-      throw _MockError(
-        422,
-        'unsupported_pair',
-        'mock transport has no USD fixture rate for ${source.code}',
-      );
+  /// Remittance fee fixture: `min(ceil(rate × amount), corridor cap)` in
+  /// [source] minor units, mirroring the backend's default policy. The cap
+  /// is denominated in the source currency ($1.00 for USD/USDC sources,
+  /// $15.00 MXN for MXN sources) — never converted at the fixture rate.
+  int _remittanceFeeMinor(Currency source, int amountMinor) {
+    final int cap;
+    switch (source) {
+      case Currency.usd:
+        cap = crossBorderFlatFeeUsdFixtureMinor;
+      case Currency.usdc:
+        // $1.00 on a 6dp token source = 1_000_000 token minor; a naive
+        // "100" would be a silent 10,000x undercharge.
+        cap = crossBorderFlatFeeUsdFixtureMinor * 10000;
+      case Currency.mxn:
+        cap = remittanceCapMxnFixtureMinor;
+      default:
+        throw _MockError(
+          422,
+          'unsupported_pair',
+          'mock transport has no remittance cap for ${source.code}',
+        );
     }
-    return (crossBorderFlatFeeUsdFixtureMinor *
-            source.scale *
-            rate ~/
-            Currency.usd.scale)
-        .toInt();
+    // Absurd amounts (fixture-only, but demo code gets copied): once the
+    // percentage would reach the cap anyway, short-circuit instead of
+    // multiplying — this also keeps `amount * rate` inside 64-bit range.
+    final breakEven = cap * 10000 ~/ remittanceRateBpsFixture;
+    if (amountMinor >= breakEven) return cap;
+    // Ceiling division: sub-minor fractions round up (never undercharge),
+    // then the corridor cap binds from above.
+    final pct =
+        (amountMinor * remittanceRateBpsFixture + 9999) ~/ 10000;
+    return pct < cap ? pct : cap;
   }
 
   // ------------------------------------------------------------- transfers
