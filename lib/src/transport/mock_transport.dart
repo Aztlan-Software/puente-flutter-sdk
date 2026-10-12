@@ -34,6 +34,10 @@ import 'puente_transport.dart';
 ///   units of the source currency at the fixture rate
 ///   (fx-spread and vendor fixtures are 0), and a destination amount
 ///   converted at the fixed [_fixtureRates] table.
+/// * Fee-inclusive quotes (`fee_inclusive: true`) → the requested amount
+///   is the total cost: the same fee comes out of it (capped at that
+///   amount, so an empty balance pays none), the remainder converts, and
+///   `source_amount_minor` is that remainder.
 /// * Transfers always take their amounts and fees **verbatim from the
 ///   stored quote** they reference — the mock never recomputes them.
 ///
@@ -341,21 +345,21 @@ class MockTransport implements PuenteTransport {
 
     // Fixture policy — mirrors the backend's DEFAULTS, documented above.
     // Not production truth: the real backend decides fees, FX, and legs.
-    final int destinationMinor;
+    final double? rate;
     final String fxRate;
-    final int flatFeeMinor;
+    final int policyFlatFeeMinor;
     final String transferType;
     final String currencyLeg;
     if (src.currency == tgtCurrency) {
       // Same-region P2P fixture: zero fee, rate "1", destination == source.
-      destinationMinor = src.minorUnits;
+      rate = null;
       fxRate = '1';
-      flatFeeMinor = 0;
+      policyFlatFeeMinor = 0;
       transferType = 'p2p_same_region';
       currencyLeg = 'USDC';
     } else {
       final pair = '${src.currency.code}->${tgtCurrency.code}';
-      final rate = _rates[pair];
+      rate = _rates[pair];
       if (rate == null) {
         throw _MockError(
           422,
@@ -363,18 +367,33 @@ class MockTransport implements PuenteTransport {
           'mock transport has no fixture rate for $pair',
         );
       }
-      destinationMinor =
-          (src.minorUnits * tgtCurrency.scale * rate ~/ src.currency.scale)
-              .toInt();
       fxRate = rate.toString();
-      flatFeeMinor = _usdAnchoredFlatFeeMinor(src.currency);
+      policyFlatFeeMinor = _usdAnchoredFlatFeeMinor(src.currency);
       transferType = 'cross_border';
       currencyLeg = tgtCurrency == Currency.mxn ? 'CETES' : 'USDC';
     }
+    // Fee-inclusive: the requested amount is the total cost, and the fee
+    // comes out of it before anything converts. The fee never exceeds that
+    // total — an empty balance pays nothing, one below the fee pays itself.
+    final feeInclusive = body['fee_inclusive'] == true;
+    final flatFeeMinor = feeInclusive
+        ? math.min(policyFlatFeeMinor, src.minorUnits)
+        : policyFlatFeeMinor;
     // Fixture components: fx-spread and vendor are always 0 in the mock.
     const fxSpreadFeeMinor = 0;
     const vendorFeeMinor = 0;
     final totalFeeMinor = flatFeeMinor + fxSpreadFeeMinor + vendorFeeMinor;
+    // The principal is what converts; total cost is always principal + fee.
+    final principal = feeInclusive
+        ? Money.fromMinor(src.minorUnits - totalFeeMinor, src.currency)
+        : src;
+    final int destinationMinor = rate == null
+        ? principal.minorUnits
+        : (principal.minorUnits *
+                tgtCurrency.scale *
+                rate ~/
+                src.currency.scale)
+            .toInt();
 
     final id = 'qt_${_uuid.v4().replaceAll('-', '').substring(0, 12)}';
     final now = clock.now();
@@ -382,13 +401,13 @@ class MockTransport implements PuenteTransport {
     final quote = <String, dynamic>{
       // Current backend shape (POST /v1/quotes response).
       'quote_id': id,
-      'source_amount_minor': src.minorUnits,
+      'source_amount_minor': principal.minorUnits,
       'source_currency': src.currency.code,
       'destination_amount_minor': destinationMinor,
       'destination_currency': tgtCurrency.code,
       'fx_rate': fxRate,
       'total_fee_minor': totalFeeMinor,
-      'total_cost_minor': src.minorUnits + totalFeeMinor,
+      'total_cost_minor': principal.minorUnits + totalFeeMinor,
       'expires_at': now.add(_quoteTtl).toUtc().toIso8601String(),
       'transfer_type': transferType,
       'currency_leg': currencyLeg,
@@ -401,7 +420,7 @@ class MockTransport implements PuenteTransport {
       },
       // Legacy shape, kept alongside so older parsers keep working.
       'id': id,
-      'source_amount': src.toJson(),
+      'source_amount': principal.toJson(),
       'target_amount': tgt.toJson(),
       'exchange_rate': double.parse(fxRate),
       'fee': Money.fromMinor(totalFeeMinor, src.currency).toJson(),

@@ -135,6 +135,88 @@ void main() {
       });
     });
 
+    group('fee-inclusive (a whole balance changing currency)', () {
+      // \$12,450.00 MXN — the Pesito demo seed — moving to dollars.
+      test('the requested amount is the total and the fee comes out first',
+          () async {
+        final q = await client.quotes.create(
+          sourceAmount: const Money.fromMinor(1245000, Currency.mxn),
+          targetCurrency: Currency.usd,
+          feeInclusive: true,
+        );
+        expect(q.totalCost, const Money.fromMinor(1245000, Currency.mxn));
+        expect(q.fee, const Money.fromMinor(1973, Currency.mxn));
+        expect(q.sourceAmount, const Money.fromMinor(1243027, Currency.mxn));
+        // 12,430.27 pesos at 19.73: \$630.01, floored.
+        expect(q.targetAmount, const Money.fromMinor(63001, Currency.usd));
+        expect(q.transferType, 'cross_border');
+      });
+
+      test('into reais the same way', () async {
+        final q = await client.quotes.create(
+          sourceAmount: const Money.fromMinor(1245000, Currency.mxn),
+          targetCurrency: Currency.brl,
+          feeInclusive: true,
+        );
+        expect(q.totalCost, const Money.fromMinor(1245000, Currency.mxn));
+        // 12,430.27 pesos at 3.45 per real: R\$3,602.97, floored.
+        expect(q.targetAmount, const Money.fromMinor(360297, Currency.brl));
+      });
+
+      test('an empty balance pays no fee', () async {
+        final q = await client.quotes.create(
+          sourceAmount: const Money.fromMinor(0, Currency.mxn),
+          targetCurrency: Currency.usd,
+          feeInclusive: true,
+        );
+        expect(q.fee.isZero, isTrue);
+        expect(q.totalCost, const Money.fromMinor(0, Currency.mxn));
+        expect(q.targetAmount.isZero, isTrue);
+      });
+
+      test('a balance below the fee pays all of itself and converts nothing',
+          () async {
+        final q = await client.quotes.create(
+          sourceAmount: const Money.fromMinor(1000, Currency.mxn),
+          targetCurrency: Currency.usd,
+          feeInclusive: true,
+        );
+        expect(q.fee, const Money.fromMinor(1000, Currency.mxn));
+        expect(q.feeBreakdown!.flatFee.minorUnits, 1000);
+        expect(q.totalCost, const Money.fromMinor(1000, Currency.mxn));
+        expect(q.sourceAmount.isZero, isTrue);
+        expect(q.targetAmount.isZero, isTrue);
+      });
+
+      test('same currency has no fee, so the total converts one to one',
+          () async {
+        final q = await client.quotes.create(
+          sourceAmount: const Money.fromMinor(5000, Currency.brl),
+          targetCurrency: Currency.brl,
+          feeInclusive: true,
+        );
+        expect(q.totalCost, const Money.fromMinor(5000, Currency.brl));
+        expect(q.targetAmount, const Money.fromMinor(5000, Currency.brl));
+      });
+
+      test('a server that ignores the flag is refused, not believed', () async {
+        final quotes = QuotesResource(_DropsFeeInclusive(MockTransport(
+          seed: 3,
+          settlementLatency: Duration.zero,
+          networkLatency: Duration.zero,
+        )));
+        await expectLater(
+          quotes.create(
+            sourceAmount: const Money.fromMinor(1245000, Currency.mxn),
+            targetCurrency: Currency.usd,
+            feeInclusive: true,
+          ),
+          throwsA(isA<DecodeException>()
+              .having((e) => e.target, 'target', 'Quote.totalCost')),
+        );
+      });
+    });
+
     test('transfer created from a quote uses the quote amounts verbatim',
         () async {
       final q = await client.quotes.create(
@@ -293,4 +375,24 @@ void main() {
       });
     });
   });
+}
+
+/// A backend from before fee-inclusive pricing: axum drops the unknown
+/// `fee_inclusive` key, so the quote comes back with the fee on top.
+class _DropsFeeInclusive implements PuenteTransport {
+  _DropsFeeInclusive(this._inner);
+
+  final PuenteTransport _inner;
+
+  @override
+  Future<PuenteResponse> send(PuenteRequest request) {
+    final body = request.body;
+    if (body is! Map<String, dynamic>) return _inner.send(request);
+    return _inner.send(request.copyWith(
+      body: Map<String, dynamic>.of(body)..remove('fee_inclusive'),
+    ));
+  }
+
+  @override
+  void close() => _inner.close();
 }

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.0 - 2026-10-12
+
+**Fee-inclusive quotes.** `quotes.create(feeInclusive: true)` treats the
+amount as the total cost: the server takes its fee out first and converts
+the rest. It is for moving a whole balance, such as a wallet changing
+currency, where there is nothing left over to pay a fee on top.
+
+- On such a quote `totalCost` equals the amount asked for, `sourceAmount` is
+  that total less `fee`, and `targetAmount` is what the remainder converts
+  to. The wire invariant `total_cost = source + fee` still holds.
+- `MockTransport` prices it from the same fixtures, with the fee capped at
+  the total (an empty balance pays no fee).
+- **Ahead of the backend.** The flag goes out as `fee_inclusive: true`, and
+  the axum backend drops unknown fields, so today's server would answer with
+  the fee on top. The SDK checks that `totalCost` equals the amount asked for
+  and throws `DecodeException` (target `Quote.totalCost`) when it does not,
+  rather than return a quote that means something else.
+
 ## 0.8.0 - 2026-10-12
 
 **Brazilian reais in the mock.** `Currency.brl` (`"BRL"`, 2 decimals), so a

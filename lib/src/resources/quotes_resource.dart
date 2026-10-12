@@ -1,3 +1,4 @@
+import '../exceptions/decode_exception.dart';
 import '../models/currency.dart';
 import '../models/money.dart';
 import '../models/quote.dart';
@@ -22,6 +23,16 @@ class QuotesResource extends ResourceBase {
   /// done by the backend — the SDK only relays the request and
   /// deserializes the answer.
   ///
+  /// [feeInclusive] makes [sourceAmount] the TOTAL cost instead: the
+  /// server takes its fee out of it first and converts what is left, so
+  /// [Quote.totalCost] equals [sourceAmount], [Quote.sourceAmount] is
+  /// that total less [Quote.fee], and [Quote.targetAmount] is what the
+  /// remainder converts to. It is for moving a whole balance (a wallet
+  /// changing currency), where nothing exists to pay a fee on top. Sent
+  /// as `fee_inclusive: true`. A server that ignores the flag would
+  /// answer with the fee on top; that quote is refused with a
+  /// [DecodeException] rather than handed back with the other meaning.
+  ///
   /// [beneficiaryCountry] is the optional ISO country of the beneficiary
   /// (e.g. `"MX"`), forwarded as `beneficiary_country`.
   ///
@@ -37,6 +48,7 @@ class QuotesResource extends ResourceBase {
   Future<Quote> create({
     required Money sourceAmount,
     required Currency targetCurrency,
+    bool feeInclusive = false,
     String? beneficiaryCountry,
     String? idempotencyKey,
   }) async {
@@ -52,12 +64,27 @@ class QuotesResource extends ResourceBase {
         // Current backend shape (POST /v1/quotes).
         'source_amount_minor': sourceAmount.minorUnits,
         'destination_currency': targetCurrency.code,
+        if (feeInclusive) 'fee_inclusive': true,
         if (beneficiaryCountry != null)
           'beneficiary_country': beneficiaryCountry,
       },
       idempotencyKey: key,
     ));
-    return decode(response, Quote.fromJson,
-        target: 'Quote', idempotencyKey: key);
+    final quote =
+        decode(response, Quote.fromJson, target: 'Quote', idempotencyKey: key);
+    // Because unknown fields are ignored, a backend without fee-inclusive
+    // pricing answers as if the flag were absent. Its total then differs
+    // from the amount asked for whenever there is a fee.
+    if (feeInclusive && quote.totalCost != sourceAmount) {
+      throw DecodeException(
+        'fee_inclusive quote came back with total_cost '
+        '${quote.totalCost?.minorUnits} for a requested total of '
+        '${sourceAmount.minorUnits}; the server did not honour the flag',
+        target: 'Quote.totalCost',
+        requestId: response.requestId,
+        idempotencyKey: key,
+      );
+    }
+    return quote;
   }
 }
