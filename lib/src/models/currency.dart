@@ -1,9 +1,14 @@
 /// Currencies the Puente Railway ledger tracks.
 ///
 /// Mirrors `puente_core::Currency` in the Rust workspace. Values are wired
-/// as UPPERCASE strings (`"USD"`, `"MXN"`, `"USDC"`, `"OUSD"`, `"CETES"`,
-/// `"SOL"`) on the JSON boundary so the Dart SDK and Rust server stay in
-/// sync without a schema translation layer.
+/// as UPPERCASE strings (`"USD"`, `"MXN"`, `"BRL"`, `"USDC"`, `"OUSD"`,
+/// `"CETES"`, `"SOL"`) on the JSON boundary so the Dart SDK and Rust server
+/// stay in sync without a schema translation layer.
+///
+/// One exception runs ahead of the server: [brl]. The mock transport prices
+/// it so Brazil can be built and demoed offline, but `puente_core` does not
+/// track reais yet, so the live backend rejects a BRL quote (422) until it
+/// does.
 ///
 /// **Minor units.** Every monetary amount in this SDK is an integer count of
 /// minor units. The number of decimal places per currency lives on the enum
@@ -15,6 +20,10 @@ enum Currency {
 
   /// Mexican pesos. 2 decimals (centavos).
   mxn('MXN', 2),
+
+  /// Brazilian reais. 2 decimals (centavos). Mock-priced only — see the
+  /// enum docs.
+  brl('BRL', 2),
 
   /// SPL USDC on Solana. 6 decimals.
   usdc('USDC', 6),

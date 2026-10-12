@@ -85,6 +85,56 @@ void main() {
       expect(q.feeBreakdown!.flatFee.minorUnits, 1000000);
     });
 
+    group('reais (mock-priced ahead of the backend)', () {
+      test('BRL to BRL is same-region P2P with no fee', () async {
+        final q = await client.quotes.create(
+          sourceAmount: const Money.fromMinor(5000, Currency.brl),
+          targetCurrency: Currency.brl,
+        );
+        expect(q.fee.isZero, isTrue);
+        expect(q.exchangeRate, 1.0);
+        expect(q.targetAmount, const Money.fromMinor(5000, Currency.brl));
+        expect(q.totalCost, const Money.fromMinor(5000, Currency.brl));
+        expect(q.transferType, 'p2p_same_region');
+      });
+
+      test('USD to BRL converts at the derived rate for a \$1.00 fee',
+          () async {
+        // 19.73 / 3.45 reais per dollar: \$100.00 is R\$571.88.
+        final q = await client.quotes.create(
+          sourceAmount: const Money.fromMinor(10000, Currency.usd),
+          targetCurrency: Currency.brl,
+        );
+        expect(q.targetAmount, const Money.fromMinor(57188, Currency.brl));
+        expect(q.fee, const Money.fromMinor(100, Currency.usd));
+        expect(q.totalCost, const Money.fromMinor(10100, Currency.usd));
+        expect(q.transferType, 'cross_border');
+        expect(q.currencyLeg, CurrencyLeg.usdc);
+      });
+
+      test('BRL to MXN pays 3.45 pesos per real and charges \$1.00 in reais',
+          () async {
+        final q = await client.quotes.create(
+          sourceAmount: const Money.fromMinor(10000, Currency.brl),
+          targetCurrency: Currency.mxn,
+        );
+        expect(q.targetAmount, const Money.fromMinor(34500, Currency.mxn));
+        // \$1.00 USD at 19.73 / 3.45 reais per dollar, floored: R\$5.71.
+        expect(q.fee, const Money.fromMinor(571, Currency.brl));
+        expect(q.totalCost, const Money.fromMinor(10571, Currency.brl));
+        expect(q.currencyLeg, CurrencyLeg.cetes);
+      });
+
+      test('MXN to BRL uses the inverse of the same anchor', () async {
+        final q = await client.quotes.create(
+          sourceAmount: const Money.fromMinor(120000, Currency.mxn),
+          targetCurrency: Currency.brl,
+        );
+        expect(q.targetAmount, const Money.fromMinor(34782, Currency.brl));
+        expect(q.fee, const Money.fromMinor(1973, Currency.mxn));
+      });
+    });
+
     test('transfer created from a quote uses the quote amounts verbatim',
         () async {
       final q = await client.quotes.create(

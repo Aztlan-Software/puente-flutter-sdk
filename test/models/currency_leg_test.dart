@@ -26,4 +26,13 @@ void main() {
       expect(Currency.fromCode('ousd'), Currency.ousd);
     });
   });
+
+  group('Currency.brl', () {
+    test('is wired as BRL with 2 decimals', () {
+      expect(Currency.brl.code, 'BRL');
+      expect(Currency.brl.decimals, 2);
+      expect(Currency.fromCode('BRL'), Currency.brl);
+      expect(Currency.tryFromCode('brl'), Currency.brl);
+    });
+  });
 }

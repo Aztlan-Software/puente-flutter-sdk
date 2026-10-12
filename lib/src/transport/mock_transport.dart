@@ -160,6 +160,10 @@ class MockTransport implements PuenteTransport {
   /// Dev fixture rates — the real rate ALWAYS comes from the backend
   /// quote. Fixed (never market-driven) so tests and demos are
   /// deterministic.
+  ///
+  /// Reais are anchored at **1 BRL = 3.45 MXN**, and the dollar legs are
+  /// derived from that and the peso rate rather than chosen separately, so
+  /// every route between the same two currencies prices alike.
   static const Map<String, double> _fixtureRates = <String, double>{
     'USD->MXN': 19.73,
     'MXN->USD': 1 / 19.73,
@@ -167,6 +171,12 @@ class MockTransport implements PuenteTransport {
     'USDC->USD': 1.0,
     'USDC->MXN': 19.73,
     'MXN->USDC': 1 / 19.73,
+    'BRL->MXN': 3.45,
+    'MXN->BRL': 1 / 3.45,
+    'USD->BRL': 19.73 / 3.45,
+    'BRL->USD': 3.45 / 19.73,
+    'USDC->BRL': 19.73 / 3.45,
+    'BRL->USDC': 3.45 / 19.73,
   };
 
   /// Dev fixture: cross-border flat fee, anchored to **$1.00 USD** — the

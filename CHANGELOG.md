@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.0 - 2026-10-12
+
+**Brazilian reais in the mock.** `Currency.brl` (`"BRL"`, 2 decimals), so a
+client can build and demo Brazil offline.
+
+- `MockTransport` prices reais from fixtures anchored at 1 BRL = 3.45 MXN,
+  with the dollar legs derived from that and the 19.73 peso rate:
+  `BRL<->MXN`, `BRL<->USD` and `BRL<->USDC`. Same-currency BRL quotes are
+  same-region P2P with no fee, like every other currency; cross-border ones
+  charge the usual $1.00-USD-equivalent flat fee in the source currency.
+- **Ahead of the backend.** `puente_core::Currency` has no reais yet, so the
+  live backend rejects a BRL quote with a 422 until it does. Until then,
+  BRL in a non-mock build is a validation error, not a price.
+
+Minor version, not patch: a consumer with an exhaustive `switch` over
+`Currency` stops compiling until it handles `brl`.
+
 ## 0.7.0 - 2026-09-06
 
 **Didit verification handoff.** `KycSession` can now tell a client how to
